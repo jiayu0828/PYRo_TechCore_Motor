@@ -15,8 +15,9 @@ target_compile_options(Engineer PRIVATE
 target_sources(Engineer PRIVATE
         pyro_init_thread.cpp
         pyro_mission_planner.cpp
-        TechCore/cybergear_scan_task.cpp
-
+        #TechCore/cybergear_scan_task.cpp
+        TechCore/techcore_ctrl_task.cpp
+        TechCore/techcore_command.cpp
 )
 
 # ===================== 头文件包含路径 =====================

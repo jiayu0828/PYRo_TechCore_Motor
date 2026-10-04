@@ -34,7 +34,7 @@ uart_drv_t& bsp_uart::get_uart3()
 
 uart_drv_t& bsp_uart::get_uart6()
 {
-    // USART6: 裁判系统，PG14(TX)/PG9(RX)
+    // USART6: 键盘通信，PG14(TX)/PG9(RX)，115200 8N1
     static uart_drv_t instance(&huart6, 512);
     return instance;
 }

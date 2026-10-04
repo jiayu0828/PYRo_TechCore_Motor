@@ -277,8 +277,9 @@ void cybergear_motor_drv_t::extended_rx_callback(uint32_t id,
                                                     const uint8_t *data)
 {
     // 解析29位扩展帧ID
+    // 运动反馈帧中, 电机ID在bit8~15, bit0~7是主机ID(master_id=0)
     uint8_t type = static_cast<uint8_t>((id >> 24) & 0x1F);
-    uint8_t motor_id = static_cast<uint8_t>(id & 0xFF);
+    uint8_t motor_id = static_cast<uint8_t>((id >> 8) & 0xFF);
 
     // 只处理反馈帧（类型2）、故障帧（类型21）、参数读写回应（类型18）
     if (type != CMD_MOTOR_FEEDBACK &&

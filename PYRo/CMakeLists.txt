@@ -60,8 +60,8 @@ target_sources(PYRo PRIVATE
         # --- Debug ---
 
         # --- Device ---
-
-
+        Device/WS2812/ws2812_driver.cpp
+        Device/WS2812/ws2812_middleware.cpp
 
 )
 
@@ -86,7 +86,8 @@ target_include_directories(PYRo PUBLIC
 
         # --- Device ---
 
-
+        Device/WS2812
+        
         # --- Algorithm ---
         Algorithm/Common
         Algorithm/Kinematics

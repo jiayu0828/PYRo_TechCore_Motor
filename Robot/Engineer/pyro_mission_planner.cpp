@@ -6,6 +6,7 @@
 extern "C" {
     extern void pyro_init_thread(void *argument);
     extern void cybergear_scan_task(void *argument);
+    extern void techcore_ctrl_task(void *argument);
 }//用来记录任务线程
 
 extern "C" void start_mission_planer_task(void const *argument)
@@ -21,9 +22,21 @@ extern "C" void start_mission_planer_task(void const *argument)
 
     // 等待底层驱动初始化完成
     vTaskDelay(pdMS_TO_TICKS(100));
+
+    // 小米电机扫描任务已注释 - 当前使用硬编码ID(1/2/3对应Yaw/Pitch/Roll)
+    // 如需扫描未知ID的电机，取消下面注释即可(扫描完成后任务自动退出)
+    // xTaskCreate(
+    //     cybergear_scan_task,
+    //     "cyber_scan",
+    //     512,
+    //     nullptr,
+    //     configMAX_PRIORITIES - 1,
+    //     nullptr);
+
+    // 创建科技核心主控任务(X/Z平移轴 + YPR旋转轴 + 限位检测 + 校准)
     xTaskCreate(
-        cybergear_scan_task,
-        "cyber_scan",
+        techcore_ctrl_task,
+        "techcore_ctrl",
         2048,
         nullptr,
         configMAX_PRIORITIES - 1,
