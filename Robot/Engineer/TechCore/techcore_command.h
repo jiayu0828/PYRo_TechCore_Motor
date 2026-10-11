@@ -81,15 +81,15 @@ extern volatile uint32_t g_cmd_last_tick_ms;
 #define Z_SPEED_DOWNWARD     (-MOVE_SPEED_RAD)  ///< Z轴向下移动速度
 
 // ============================================================
-// 校准配置 (小米三轴双向找限位 + X/Z移动到限位)
+// 校准配置 (小米三轴向速控速找限位 + 回中验证)
 // ============================================================
-#define CALI_TORQUE_YAW       0.3f   ///< Yaw找限位恒力矩(N·m)
-#define CALI_TORQUE_ROLL      3.0f   ///< Pitch/Roll找限位恒力矩(N·m), 更大力矩快速碰限位
-#define CALI_SPEED_THRESHOLD  0.2f   ///< 堵转速度阈值(rad/s)
-#define CALI_STALL_TIME_MS    500.0f ///< 堵转判定时间(ms)
-#define CALI_LOCK_TIME_MS     300.0f ///< 锁定保持时间(ms)
-#define CALI_MAX_TIME_MS      8000.0f ///< 单方向最大校准时间(ms), 超时强制判定到达限位
-#define CALI_CENTER_TORQUE   1.0f   ///< 回中力矩上限(N·m)
+#define CALI_SPEED_TARGET     0.5f   ///< 校准目标速度(rad/s)
+#define CALI_MAX_TRQ          12.0f   ///< 校准速度环力矩上限(N·m)
+#define CALI_STALL_TRQ_THRESH 2.0f   ///< 堵转力矩阈值(N·m)
+#define CALI_STALL_SPEED      0.1f  ///< 堵转速度阈值(rad/s)
+#define CALI_STALL_TIME_MS    500.0f ///< 堵转判定持续时间(ms)
+#define CALI_MAX_TIME_MS      6000.0f ///< 单方向超时时间(ms)
+#define CALI_CENTER_TORQUE    12.0f   ///< 回中力矩上限(N·m)
 // ============================================================
 // 姿态调整预设参数 (指令2使用)
 // 指令2触发后, 在动作数组中循环切换, 每次执行一个动作

@@ -41,9 +41,7 @@ enum sys_state_t {
 
 enum cali_phase_t {
     CALI_FIND_NEG = 0,
-    CALI_LOCK_NEG,
     CALI_FIND_POS,
-    CALI_LOCK_POS,
     CALI_CENTER,
 };
 
@@ -73,7 +71,6 @@ static bool         cali_done    = false;   // 校准完成标志，没完成前
 static int          cali_axis     = 0;     // 0=Yaw 1=Pitch 2=Roll 3=XZ 4=Done
 static cali_phase_t cali_phase    = CALI_FIND_NEG;
 static float        cali_stall_t  = 0.0f;
-static float        cali_lock_t   = 0.0f;
 static float        cali_find_t   = 0.0f;
 static float        cali_neg_pos  = 0.0f;
 static float        cali_pos_pos  = 0.0f;
@@ -163,7 +160,7 @@ static float torque_limit(void) {
 // YPR PID计算 (只计算力矩写入out, 不发送)
 // stall_enable: 是否启用堵转保护
 // ============================================================
-static void calc_ypr_pid(bool stall_enable)
+static void calc_ypr_pid()
 {
     float lim = torque_limit();
 
@@ -245,7 +242,7 @@ static void cali_step(void)
 
     // --- X/Z校准 (axis=3): X向前Z向上, 碰到限位即完成 ---
     if (cali_axis == 3) {
-        calc_ypr_pid(true);
+        calc_ypr_pid();
         set_xz_speed(X_SPEED_FORWARD, Z_SPEED_UPWARD);
         if ((sw_forward || sw_back) && (sw_up || sw_down)) {
             cali_axis = 4;
@@ -274,71 +271,66 @@ static void cali_step(void)
                   (cali_axis==1) ? &pitch_dmax : &roll_dmax;
 
     hold_ypr_except(cali_axis);
-    float cali_trq = (cali_axis == 0) ? CALI_TORQUE_YAW : CALI_TORQUE_ROLL;
+    pid_t* rot_pid = (cali_axis==0) ? g_yaw_rot_pid :
+                     (cali_axis==1) ? g_pitch_rot_pid : g_roll_rot_pid;
     float trq = 0;
 
     switch (cali_phase) {
     case CALI_FIND_NEG:
-        trq = -cali_trq;
+        // 速度环控速: 目标 -CALI_SPEED_TARGET
+        trq = rot_pid->calculate(-CALI_SPEED_TARGET, motor->get_current_rotate());
+        trq = clampf(trq, -CALI_MAX_TRQ, CALI_MAX_TRQ);
         if (cali_find_t == 0) cali_find_t = now;
         {
             float spd = motor->get_current_rotate();
-            bool stuck = (spd < 0 ? -spd : spd) < CALI_SPEED_THRESHOLD;
+            // 堵转判定: 力矩大 + 速度低
+            bool stalled = (fabsf(trq) > CALI_STALL_TRQ_THRESH) &&
+                           (fabsf(spd) < CALI_STALL_SPEED);
             bool timeout = (now - cali_find_t > CALI_MAX_TIME_MS);
-            if (stuck || timeout) {
+            if (stalled || timeout) {
                 if (cali_stall_t == 0) cali_stall_t = now;
                 else if (now - cali_stall_t > CALI_STALL_TIME_MS) {
-                    cali_lock_t = now;
-                    cali_phase = CALI_LOCK_NEG;
+                    // 堵转确认, 直接记录位置, 切找正方向
+                    cali_neg_pos = motor->get_current_position();
+                    cali_stall_t = 0;
+                    cali_find_t = 0;
+                    cali_phase = CALI_FIND_POS;
                 }
             } else cali_stall_t = 0;
-        }
-        break;
-
-    case CALI_LOCK_NEG:
-        trq = -cali_trq;
-        if (now - cali_lock_t > CALI_LOCK_TIME_MS) {
-            cali_neg_pos = motor->get_current_position();
-            cali_stall_t = 0;
-            cali_find_t = 0;
-            cali_phase = CALI_FIND_POS;
         }
         break;
 
     case CALI_FIND_POS:
-        trq = cali_trq;
+        // 速度环控速: 目标 +CALI_SPEED_TARGET
+        trq = rot_pid->calculate(CALI_SPEED_TARGET, motor->get_current_rotate());
+        trq = clampf(trq, -CALI_MAX_TRQ, CALI_MAX_TRQ);
         if (cali_find_t == 0) cali_find_t = now;
         {
             float spd = motor->get_current_rotate();
-            bool stuck = (spd < 0 ? -spd : spd) < CALI_SPEED_THRESHOLD;
+            bool stalled = (fabsf(trq) > CALI_STALL_TRQ_THRESH) &&
+                           (fabsf(spd) < CALI_STALL_SPEED);
             bool timeout = (now - cali_find_t > CALI_MAX_TIME_MS);
-            if (stuck || timeout) {
+            if (stalled || timeout) {
                 if (cali_stall_t == 0) cali_stall_t = now;
                 else if (now - cali_stall_t > CALI_STALL_TIME_MS) {
-                    cali_lock_t = now;
-                    cali_phase = CALI_LOCK_POS;
+                    // 堵转确认, 记录位置, 算限位范围
+                    cali_pos_pos = motor->get_current_position();
+                    *offset = (cali_neg_pos + cali_pos_pos) / 2.0f;
+                    *dmin = cali_neg_pos - *offset;
+                    *dmax = cali_pos_pos - *offset;
+                    cali_stall_t = 0;
+                    cali_find_t = 0;
+                    cali_phase = CALI_CENTER;
                 }
             } else cali_stall_t = 0;
-        }
-        break;
-
-    case CALI_LOCK_POS:
-        trq = cali_trq;
-        if (now - cali_lock_t > CALI_LOCK_TIME_MS) {
-            cali_pos_pos = motor->get_current_position();
-            *offset = (cali_neg_pos + cali_pos_pos) / 2.0f;
-            *dmin = cali_neg_pos - *offset;
-            *dmax = cali_pos_pos - *offset;
-            cali_phase = CALI_CENTER;
         }
         break;
 
     case CALI_CENTER: {
         float fb = motor->get_current_position() - *offset;
         pid_t* ppos = (cali_axis==0) ? g_yaw_pos_pid : (cali_axis==1) ? g_pitch_pos_pid : g_roll_pos_pid;
-        pid_t* prot = (cali_axis==0) ? g_yaw_rot_pid : (cali_axis==1) ? g_pitch_rot_pid : g_roll_rot_pid;
         float vel = ppos->calculate(0.0f, fb);
-        trq = clampf(prot->calculate(vel, motor->get_current_rotate()), -CALI_CENTER_TORQUE, CALI_CENTER_TORQUE);
+        trq = clampf(rot_pid->calculate(vel, motor->get_current_rotate()), -CALI_CENTER_TORQUE, CALI_CENTER_TORQUE);
         if (fb < 0.1f && fb > -0.1f) {
             cali_axis++;
             cali_phase = CALI_FIND_NEG;
@@ -377,7 +369,7 @@ static void pose_step(void)
             pose_state = POSE_Z_MOVE;
             pose_start_t = now;
         }
-        calc_ypr_pid(true);
+        calc_ypr_pid();
         return;
     }
 
@@ -398,11 +390,11 @@ static void pose_step(void)
             sys_state = SYS_HOLD;
             torque_hold = true;
         }
-        calc_ypr_pid(true);
+        calc_ypr_pid();
         return;
     }
     set_xz_position();
-    calc_ypr_pid(true);
+    calc_ypr_pid();
 }
 
 // ============================================================
@@ -442,9 +434,9 @@ static void flush_motors(void)
     if (now_ms - print_t > 20.0f) {
         print_t = now_ms;
         union { float f; uint8_t b[4]; } c1, c2, c3;
-        c1.f = g_pitch_trq_sent;//计算的速度值
-        c2.f = g_pitch_target_speed;//位置的期望值
-        c3.f = g_pitch_fb_val;//位置的反馈值
+        c1.f = g_pitch_trq_sent;//发送的力矩值
+        c2.f = g_pitch_target_speed;//速度的期望值
+        c3.f = g_pitch_fb_val;//速度的反馈值
         uint8_t tx[14];
         tx[0]  = 0xAA;
         tx[1]  = c1.b[0]; tx[2]  = c1.b[1]; tx[3]  = c1.b[2]; tx[4]  = c1.b[3];
@@ -540,7 +532,7 @@ extern "C" void techcore_ctrl_task(void *argument)
         case SYS_HOLD:
             if (cali_done) {
                 set_xz_position();
-                calc_ypr_pid(false);
+                calc_ypr_pid();
             } else {
                 out.yaw_trq = 0; out.pitch_trq = 0; out.roll_trq = 0;
                 out.x_speed = 0; out.z_speed = 0;
@@ -550,7 +542,7 @@ extern "C" void techcore_ctrl_task(void *argument)
         default:
             if (cali_done) {
                 set_xz_position();
-                calc_ypr_pid(true);
+                calc_ypr_pid();
             } else {
                 out.yaw_trq = 0; out.pitch_trq = 0; out.roll_trq = 0;
                 out.x_speed = 0; out.z_speed = 0;
