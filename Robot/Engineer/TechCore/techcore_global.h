@@ -39,6 +39,8 @@ extern pyro::pid_t*            g_roll_rot_pid;
 extern pyro::cybergear_motor_drv_t*  g_yaw_motor;
 extern pyro::cybergear_motor_drv_t*  g_pitch_motor;
 extern pyro::cybergear_motor_drv_t*  g_roll_motor;
+extern pyro::pid_t*            g_pitch_cali_pid;
+extern pyro::pid_t*            g_roll_cali_pid;
 
 // --- 初始化状态标志 ---
 // true=所有电机和控制器初始化完成且使能成功，控制任务可安全运行

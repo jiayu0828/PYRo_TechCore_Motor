@@ -132,6 +132,9 @@ volatile float    g_pitch_trq_sent   = 0.0f;
 volatile float    g_roll_trq_sent    = 0.0f;
 volatile float    g_pitch_fb_val     = 0.0f;
 volatile float    g_pitch_target_speed = 0.0f;
+volatile float    g_roll_target_speed = 0.0f;
+volatile float    g_roll_fb_val      = 0.0f;
+
 // ============================================================
 // 每帧电机输出 (统一发送)
 // ============================================================
@@ -182,6 +185,8 @@ static void calc_ypr_pid()
     if (motor_online[2]) {
         float vel = g_roll_pos_pid->calculate(g_roll_target, g_roll_fb_pos);
         out.roll_trq = g_roll_rot_pid->calculate(vel, g_roll_motor->get_current_rotate());
+        g_roll_fb_val = g_roll_motor->get_current_rotate();//调试相关变量
+        g_roll_target_speed = vel;//调试相关变量
     }
 }
 
@@ -199,6 +204,8 @@ static void hold_ypr_except(int active)
     };
     for (int i = 0; i < 3; i++) {
         if (i == active || !motor_online[i]) continue;
+        // 未校准的轴(i > active)不保持位置, 输出0力矩
+        if (i > active) { *ax[i].out = 0.0f; continue; }
         float vel = ax[i].pos->calculate(ax[i].tgt, ax[i].fb);
         float trq = ax[i].rot->calculate(vel, ax[i].m->get_current_rotate());
         // 只有Yaw(i=0)限制力矩, Pitch/Roll不限制
@@ -271,14 +278,16 @@ static void cali_step(void)
                   (cali_axis==1) ? &pitch_dmax : &roll_dmax;
 
     hold_ypr_except(cali_axis);
-    pid_t* rot_pid = (cali_axis==0) ? g_yaw_rot_pid :
-                     (cali_axis==1) ? g_pitch_rot_pid : g_roll_rot_pid;
+    // 校准用速度环: Yaw用正常rot_pid, Pitch/Roll用cali_pid(大力矩)
+    pid_t* cali_rot_pid;
+    if (cali_axis == 0)      cali_rot_pid = g_yaw_rot_pid;
+    else if (cali_axis == 1) cali_rot_pid = g_pitch_cali_pid;
+    else                     cali_rot_pid = g_roll_cali_pid;
     float trq = 0;
 
     switch (cali_phase) {
     case CALI_FIND_NEG:
-        // 速度环控速: 目标 -CALI_SPEED_TARGET
-        trq = rot_pid->calculate(-CALI_SPEED_TARGET, motor->get_current_rotate());
+        trq = cali_rot_pid->calculate(-CALI_SPEED_TARGET, motor->get_current_rotate());
         trq = clampf(trq, -CALI_MAX_TRQ, CALI_MAX_TRQ);
         if (cali_find_t == 0) cali_find_t = now;
         {
@@ -301,8 +310,7 @@ static void cali_step(void)
         break;
 
     case CALI_FIND_POS:
-        // 速度环控速: 目标 +CALI_SPEED_TARGET
-        trq = rot_pid->calculate(CALI_SPEED_TARGET, motor->get_current_rotate());
+        trq = cali_rot_pid->calculate(CALI_SPEED_TARGET, motor->get_current_rotate());
         trq = clampf(trq, -CALI_MAX_TRQ, CALI_MAX_TRQ);
         if (cali_find_t == 0) cali_find_t = now;
         {
@@ -329,8 +337,9 @@ static void cali_step(void)
     case CALI_CENTER: {
         float fb = motor->get_current_position() - *offset;
         pid_t* ppos = (cali_axis==0) ? g_yaw_pos_pid : (cali_axis==1) ? g_pitch_pos_pid : g_roll_pos_pid;
+        pid_t* prot = (cali_axis==0) ? g_yaw_rot_pid : (cali_axis==1) ? g_pitch_rot_pid : g_roll_rot_pid;
         float vel = ppos->calculate(0.0f, fb);
-        trq = clampf(rot_pid->calculate(vel, motor->get_current_rotate()), -CALI_CENTER_TORQUE, CALI_CENTER_TORQUE);
+        trq = clampf(prot->calculate(vel, motor->get_current_rotate()), -CALI_CENTER_TORQUE, CALI_CENTER_TORQUE);
         if (fb < 0.1f && fb > -0.1f) {
             cali_axis++;
             cali_phase = CALI_FIND_NEG;
@@ -434,9 +443,9 @@ static void flush_motors(void)
     if (now_ms - print_t > 20.0f) {
         print_t = now_ms;
         union { float f; uint8_t b[4]; } c1, c2, c3;
-        c1.f = g_pitch_trq_sent;//发送的力矩值
-        c2.f = g_pitch_target_speed;//速度的期望值
-        c3.f = g_pitch_fb_val;//速度的反馈值
+        c1.f = g_roll_trq_sent;//发送的力矩值
+        c2.f = g_roll_target_speed;//速度的期望值
+        c3.f = g_roll_fb_val;//速度的反馈值
         uint8_t tx[14];
         tx[0]  = 0xAA;
         tx[1]  = c1.b[0]; tx[2]  = c1.b[1]; tx[3]  = c1.b[2]; tx[4]  = c1.b[3];

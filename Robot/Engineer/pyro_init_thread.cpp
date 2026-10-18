@@ -40,8 +40,10 @@ pyro::pid_t*            g_yaw_pos_pid   = nullptr;
 pyro::pid_t*            g_yaw_rot_pid   = nullptr;
 pyro::pid_t*            g_pitch_pos_pid = nullptr;
 pyro::pid_t*            g_pitch_rot_pid = nullptr;
+pyro::pid_t*            g_pitch_cali_pid = nullptr;
 pyro::pid_t*            g_roll_pos_pid  = nullptr;
 pyro::pid_t*            g_roll_rot_pid  = nullptr;
+pyro::pid_t*            g_roll_cali_pid  = nullptr;
 cybergear_motor_drv_t*  g_yaw_motor     = nullptr;
 cybergear_motor_drv_t*  g_pitch_motor   = nullptr;
 cybergear_motor_drv_t*  g_roll_motor    = nullptr;
@@ -124,11 +126,15 @@ namespace pyro{
         // 4. YPR旋转轴 - 小米Cybergear (CAN1)
         // ============================================================
         g_yaw_pos_pid   = new pyro::pid_t(2.5f, 0.0f, 0.6f, 0.2f, 3.0f,30.0f,1,0,0,0);
-        g_yaw_rot_pid   = new pyro::pid_t(2.0f, 0.01f, 0.0f, 1.0f, 12.0f,20.0f,1,0,0,0);//加上力矩项的低通滤波
-        g_pitch_pos_pid = new pyro::pid_t(1.5f, 0.0f, 0.8f, 0.2f, 3.0f,30.0f,1,0,0,0);
-        g_pitch_rot_pid = new pyro::pid_t(6.0f, 0.0f, 0.0f, 1.0f, 12.0f,20.0f,1,0,0,0);
-        g_roll_pos_pid  = new pyro::pid_t(1.5f, 0.0f, 0.8f, 0.2f, 3.0f,30.0f,1,0,0,0);
-        g_roll_rot_pid  = new pyro::pid_t(6.0f, 0.0f, 0.0f, 1.0f, 12.0f,20.0f,1,0,0,0);
+        g_yaw_rot_pid   = new pyro::pid_t(2.0f, 0.01f, 0.0f, 1.0f, 5.0f,20.0f,1,0,0,0);
+        // Pitch/Roll正常PID: 和Yaw一样
+        g_pitch_pos_pid = new pyro::pid_t(2.5f, 0.0f, 0.6f, 0.2f, 3.0f,30.0f,1,0,0,0);
+        g_pitch_rot_pid = new pyro::pid_t(3.0f, 0.01f, 0.0f, 1.0f, 5.0f,20.0f,1,0,0,0);
+        g_roll_pos_pid  = new pyro::pid_t(2.5f, 0.0f, 0.6f, 0.2f, 3.0f,30.0f,1,0,0,0);
+        g_roll_rot_pid  = new pyro::pid_t(3.0f, 0.01f, 0.0f, 1.0f, 5.0f,20.0f,1,0,0,0);
+        // 校准专用速度环: Kp大, 带负载能转起来
+        g_pitch_cali_pid = new pyro::pid_t(6.0f, 0.0f, 0.0f, 0.0f, 5.0f,20.0f,1,0,0,0);
+        g_roll_cali_pid  = new pyro::pid_t(7.0f, 0.0f, 0.0f, 0.0f, 5.0f,20.0f,1,0,0,0);
 
         g_yaw_motor   = new cybergear_motor_drv_t(CYBERGEAR_YAW_ID,   CYBERGEAR_MASTER_ID, bsp_can::can1);
         g_pitch_motor = new cybergear_motor_drv_t(CYBERGEAR_PITCH_ID, CYBERGEAR_MASTER_ID, bsp_can::can1);
