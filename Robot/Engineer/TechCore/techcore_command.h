@@ -17,6 +17,8 @@
  *   1 = CALIBRATE  : 校准(小米三轴双向找限位+回中, X/Z到最前端最下端), 完成后自动HOLD
  *   2 = POSE_MOVE  : 姿态调整(循环切换动作数组, X/Z移动+YPR回中+旋转), 完成后自动HOLD
  *   4 = ESTOP      : 紧急停止, 无视一切指令, 全部电机失能
+ *   5 = CAN1_TEST  : CAN1 回环自检(诊断软件/接线), 会短暂中断该路电机通信
+ *   6 = CAN2_TEST  : CAN2 回环自检(诊断软件/接线), 会短暂中断该路电机通信
  *   (指令3已废弃, HOLD模式由校准/姿态调整完成后自动进入, 收到新指令自动退出)
  *
  * 硬件链路: 蓝牙模块 TX → C板 USART1 RX(PB7)
@@ -29,6 +31,8 @@ typedef struct
     uint8_t  pose_move_enable;   ///< 1=触发姿态调整(消费后清零) (指令2)
     uint8_t  hold_enable;        ///< 1=切换保持模式(大力矩) (指令3)
     uint8_t  estop_enable;       ///< 1=紧急停止(指令4, 最高优先级)
+    uint8_t  can1_selftest_enable; ///< 1=CAN1回环自检(消费后清零) (指令5)
+    uint8_t  can2_selftest_enable; ///< 1=CAN2回环自检(消费后清零) (指令6)
     float    x;                   ///< X轴目标位置(mm) (预留)
     float    y;                   ///< Y轴目标位置(预留)
     float    z;                   ///< Z轴目标位置(mm) (预留)
@@ -59,6 +63,8 @@ extern volatile uint32_t g_cmd_last_tick_ms;
 #define CMD_POSE_MOVE   2   ///< 姿态调整
 #define CMD_HOLD        3   ///< 保持姿态+大力矩
 #define CMD_ESTOP       4   ///< 紧急停止
+#define CMD_CAN1_SELFTEST 5 ///< CAN1 回环自检
+#define CMD_CAN2_SELFTEST 6 ///< CAN2 回环自检
 
 // ============================================================
 // 小米电机力矩上限 (两档，Yaw/Pitch/Roll三轴统一)

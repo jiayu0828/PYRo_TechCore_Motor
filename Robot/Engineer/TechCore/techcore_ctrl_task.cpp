@@ -16,6 +16,7 @@
 
 #include "pyro_core_def.h"
 #include "pyro_dwt_drv.h"
+#include "pyro_log.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -25,8 +26,115 @@
 #include <cstdint>
 #include <cstring>
 #include <cstdio>
+#include "pyro_bsp_can.h"
 #include "pyro_bsp_uart.h"
 using namespace pyro;
+
+// CAN 发送失败统计（定义在 pyro_can_drv.cpp）
+extern "C" uint32_t can_get_tx_busy_cnt(void);
+extern "C" uint32_t can_get_tx_error_cnt(void);
+
+// ============================================================
+// CAN 回环自检
+//
+// 原理：把该路 CAN 临时切到 LOOPBACK 模式，bxCAN 会把发出去的帧
+// 在芯片内部环回给自己，不依赖外部节点回 ACK。
+//   PASS -> MCU 侧(外设/驱动/位时序/过滤器)正常，问题在外部接线或电机
+//   FAIL -> MCU 侧配置有问题，先查软件
+// 自检期间该路电机通信会中断约 50ms。
+// ============================================================
+static void run_can_selftest(bsp_can::which_can which, const char *label)
+{
+    can_drv_t *can = bsp_can::get_can(which);
+    if (nullptr == can)
+    {
+        PYRO_LOGE("CAN", "%s selftest: invalid instance", label);
+        return;
+    }
+
+    PYRO_LOGI("CAN", "%s selftest start (loopback)", label);
+
+    can_selftest_result_t r{};
+    const status_t st = can->run_loopback_selftest(20U, &r);
+
+    if (PYRO_OK != st)
+    {
+        PYRO_LOGE("CAN", "%s selftest FAIL: flow error (ret=%d)", label,
+                  (int)st);
+        return;
+    }
+
+    if (r.tx_ok && r.rx_ok && r.data_ok)
+    {
+        PYRO_LOGI("CAN",
+                  "%s selftest PASS (tx=1 rx=1 data=1, %lums)",
+                  label, (unsigned long)r.elapsed_ms);
+        PYRO_LOGI("CAN",
+                  "%s -> MCU side OK. If the bus still Bus-Off, the fault is "
+                  "wiring / transceiver / motor power, not software.",
+                  label);
+        return;
+    }
+
+    PYRO_LOGE("CAN",
+              "%s selftest FAIL (tx=%d rx=%d data=%d tx_ret=%d esr=0x%08lX, %lums)",
+              label, (int)r.tx_ok, (int)r.rx_ok, (int)r.data_ok,
+              r.tx_ret, (unsigned long)r.esr,
+              (unsigned long)r.elapsed_ms);
+    PYRO_LOGE("CAN",
+              "%s -> MCU side problem: check CAN init / bit timing / filter.",
+              label);
+}
+
+// ============================================================
+// 小米电机诊断字段格式化
+// ============================================================
+static const char *motor_mode_name(uint8_t mode)
+{
+    switch (mode)
+    {
+    case 0:  return "RESET";
+    case 1:  return "CALI";
+    case 2:  return "MOTOR";
+    default: return "?";
+    }
+}
+
+/**
+ * @brief 把故障位图转成可读字符串（bit0 欠压 / bit1 过流 / bit2 过温 /
+ *        bit3 磁编码 / bit4 HALL / bit5 未标定）
+ */
+static void motor_fault_str(uint8_t fault, char *buf, size_t buf_size)
+{
+    if (0U == fault)
+    {
+        (void)snprintf(buf, buf_size, "ok");
+        return;
+    }
+
+    size_t used = 0U;
+    buf[0]      = '\0';
+
+    auto append = [&](const char *name)
+    {
+        if (used >= buf_size)
+            return;
+        const int w = snprintf(buf + used, buf_size - used, "%s%s",
+                               (0U == used) ? "" : "|", name);
+        if (w > 0)
+            used += static_cast<size_t>(w);
+    };
+
+    if (0U != (fault & 0x01U)) append("UV");
+    if (0U != (fault & 0x02U)) append("OC");
+    if (0U != (fault & 0x04U)) append("OT");
+    if (0U != (fault & 0x08U)) append("MAG");
+    if (0U != (fault & 0x10U)) append("HALL");
+    if (0U != (fault & 0x20U)) append("UNCAL");
+
+    if (0U == used)
+        (void)snprintf(buf, buf_size, "0x%02X", (unsigned)fault);
+}
 
 // ============================================================
 // 状态枚举
@@ -256,6 +364,7 @@ static void cali_step(void)
             sys_state = SYS_HOLD;
             torque_hold = true;
             cali_done = true;
+            PYRO_LOGI("CALI", "all axes done, cali_done=1 -> HOLD");
             g_x_target_pos = g_x_fb_pos;
             g_z_target_pos = g_z_fb_pos;
             g_yaw_target   = g_yaw_fb_pos;
@@ -304,6 +413,9 @@ static void cali_step(void)
                     cali_stall_t = 0;
                     cali_find_t = 0;
                     cali_phase = CALI_FIND_POS;
+                    PYRO_LOGI("CALI", "axis=%d neg limit pos=%.3f%s",
+                              cali_axis, (double)cali_neg_pos,
+                              timeout ? " (timeout)" : "");
                 }
             } else cali_stall_t = 0;
         }
@@ -329,6 +441,9 @@ static void cali_step(void)
                     cali_stall_t = 0;
                     cali_find_t = 0;
                     cali_phase = CALI_CENTER;
+                    PYRO_LOGI("CALI", "axis=%d pos limit pos=%.3f%s",
+                              cali_axis, (double)cali_pos_pos,
+                              timeout ? " (timeout)" : "");
                 }
             } else cali_stall_t = 0;
         }
@@ -341,6 +456,8 @@ static void cali_step(void)
         float vel = ppos->calculate(0.0f, fb);
         trq = clampf(prot->calculate(vel, motor->get_current_rotate()), -CALI_CENTER_TORQUE, CALI_CENTER_TORQUE);
         if (fb < 0.1f && fb > -0.1f) {
+            PYRO_LOGI("CALI", "axis=%d centered, next axis=%d",
+                      cali_axis, cali_axis + 1);
             cali_axis++;
             cali_phase = CALI_FIND_NEG;
             cali_stall_t = 0;
@@ -455,6 +572,88 @@ static void flush_motors(void)
         bsp_uart::get_uart1().write(tx, 14, 10);
     }
 
+    // 周期性状态日志 (2s一次)，用于定位"力矩为0"的原因
+    static float log_t = 0;
+    if (now_ms - log_t > 2000.0f) {
+        log_t = now_ms;
+        PYRO_LOGD("CTRL",
+                  "st=%d cali_done=%d axis=%d ph=%d | trq y=%.3f p=%.3f r=%.3f"
+                  " | fb y=%.3f p=%.3f r=%.3f | tgt y=%.3f | txbusy=%lu txerr=%lu",
+                  (int)sys_state, (int)cali_done, (int)cali_axis,
+                  (int)cali_phase, (double)out.yaw_trq, (double)out.pitch_trq,
+                  (double)out.roll_trq, (double)g_yaw_fb_pos,
+                  (double)g_pitch_fb_pos, (double)g_roll_fb_pos,
+                  (double)g_yaw_target,
+                  (unsigned long)can_get_tx_busy_cnt(),
+                  (unsigned long)can_get_tx_error_cnt());
+
+        /*
+         * 每个小米电机一行诊断信息。
+         * on  : 是否收到有效反馈（通信层面）
+         * mode: 电机状态机 RESET / CALI / MOTOR
+         * flt : 故障位图（UV 欠压 / OC 过流 / OT 过温 / MAG 磁编码 /
+         *       HALL / UNCAL 未标定），ok 表示无故障
+         * busV: 电机端母线电压，异步刷新，可能是上次读到的值
+         *
+         * 判读：on=0            -> 完全没通信（接线/供电/波特率）
+         *       on=0 且 flt!=ok -> 有通信但电机报故障或未标定
+         */
+        (void)g_yaw_motor->request_param(
+            cybergear_motor_drv_t::param_vbus);
+        (void)g_pitch_motor->request_param(
+            cybergear_motor_drv_t::param_vbus);
+        (void)g_roll_motor->request_param(
+            cybergear_motor_drv_t::param_vbus);
+
+        /*
+         * 有反馈但不在 MOTOR 态，说明使能帧没有生效（例如开机时总线正在
+         * Bus-Off、邮箱满导致使能帧被丢）。这里补发使能；ESTOP 下跳过，
+         * 避免把急停的电机重新使能。
+         */
+        if (sys_state != SYS_ESTOP)
+        {
+            auto reenable_if_reset = [](cybergear_motor_drv_t *motor)
+            {
+                if ((motor->get_feedback_count() > 0U) &&
+                    (motor->get_mode_state() !=
+                     cybergear_motor_drv_t::state_motor))
+                {
+                    (void)motor->enable();
+                }
+            };
+
+            reenable_if_reset(g_yaw_motor);
+            reenable_if_reset(g_pitch_motor);
+            reenable_if_reset(g_roll_motor);
+        }
+
+        char fault_buf[32];
+
+        motor_fault_str((uint8_t)g_yaw_motor->get_fault(), fault_buf,
+                        sizeof(fault_buf));
+        PYRO_LOGD("MOTOR", "yaw   rx=%lu on=%d mode=%-5s flt=%-10s busV=%.1f",
+                  (unsigned long)g_yaw_motor->get_feedback_count(),
+                  (int)g_yaw_motor->is_online(),
+                  motor_mode_name((uint8_t)g_yaw_motor->get_mode_state()),
+                  fault_buf, (double)g_yaw_motor->get_bus_voltage());
+
+        motor_fault_str((uint8_t)g_pitch_motor->get_fault(), fault_buf,
+                        sizeof(fault_buf));
+        PYRO_LOGD("MOTOR", "pitch rx=%lu on=%d mode=%-5s flt=%-10s busV=%.1f",
+                  (unsigned long)g_pitch_motor->get_feedback_count(),
+                  (int)g_pitch_motor->is_online(),
+                  motor_mode_name((uint8_t)g_pitch_motor->get_mode_state()),
+                  fault_buf, (double)g_pitch_motor->get_bus_voltage());
+
+        motor_fault_str((uint8_t)g_roll_motor->get_fault(), fault_buf,
+                        sizeof(fault_buf));
+        PYRO_LOGD("MOTOR", "roll  rx=%lu on=%d mode=%-5s flt=%-10s busV=%.1f",
+                  (unsigned long)g_roll_motor->get_feedback_count(),
+                  (int)g_roll_motor->is_online(),
+                  motor_mode_name((uint8_t)g_roll_motor->get_mode_state()),
+                  fault_buf, (double)g_roll_motor->get_bus_voltage());
+    }
+
 }
 
 // ============================================================
@@ -491,39 +690,49 @@ extern "C" void techcore_ctrl_task(void *argument)
         g_pitch_fb_pos = g_pitch_motor->get_current_position() - pitch_offset;
         g_roll_fb_pos  = g_roll_motor->get_current_position()  - roll_offset;
 
+        // 2.1 反馈断流检测（限频打印，避免刷屏）
+        {
+            static uint32_t last_fb_warn_ms = 0;
+            if (!g_yaw_motor->is_online() || !g_pitch_motor->is_online() ||
+                !g_roll_motor->is_online())
+            {
+                if (now - (float)last_fb_warn_ms > 2000.0f)
+                {
+                    last_fb_warn_ms = (uint32_t)now;
+                    PYRO_LOGW("CTRL", "feedback lost: yaw=%d pitch=%d roll=%d",
+                              (int)g_yaw_motor->is_online(),
+                              (int)g_pitch_motor->is_online(),
+                              (int)g_roll_motor->is_online());
+                }
+            }
+        }
+
         // 3. 每帧输出清零
         memset(&out, 0, sizeof(out));
         out.x_speed_mode = false;
         out.z_speed_mode = false;
 
         // 4. 处理指令
-        if (cmd_recv.estop_enable) {
-            cmd_recv.estop_enable = 0;
-            sys_state = SYS_ESTOP;
-            g_yaw_motor->disable();
-            g_pitch_motor->disable();
-            g_roll_motor->disable();
-            g_x_motor->disable();
-            g_z_motor->disable();
-        } else if (sys_state != SYS_ESTOP) {
-            if (cmd_recv.calibrate_enable) {
-                cmd_recv.calibrate_enable = 0;
-                sys_state = SYS_CALIBRATION;
-                cali_axis = 0;
-                cali_phase = CALI_FIND_NEG;
-                cali_stall_t = 0;
-                torque_hold = false;
-            } else if (cmd_recv.pose_move_enable) {
-                cmd_recv.pose_move_enable = 0;
-                if (sys_state != SYS_CALIBRATION) {
-                    pose_act = &g_pose_actions[pose_action_i];
-                    pose_action_i = (pose_action_i + 1) % g_pose_action_count;
-                    sys_state = SYS_POSE_MOVE;
-                    pose_state = POSE_X_MOVE;
-                    pose_start_t = now;
-                    torque_hold = false;
-                }
+        // 4.0 指令接收统计（在任务上下文打印，ISR 中不打日志）
+        {
+            static uint32_t last_frames = 0;
+            static uint32_t last_err    = 0;
+            uint32_t err_total = g_cmd_rx_err_sof + g_cmd_rx_err_eof +
+                                 g_cmd_rx_err_chksum;
+            if (g_cmd_rx_frames != last_frames || err_total != last_err)
+            {
+                last_frames = g_cmd_rx_frames;
+                last_err    = err_total;
+                PYRO_LOGI("CMD",
+                          "rx total=%lu frames=%lu last=%u err(sof=%lu eof=%lu ck=%lu)",
+                          (unsigned long)g_cmd_rx_total,
+                          (unsigned long)g_cmd_rx_frames,
+                          (unsigned)g_cmd_last_cmd,
+                          (unsigned long)g_cmd_rx_err_sof,
+                          (unsigned long)g_cmd_rx_err_eof,
+                          (unsigned long)g_cmd_rx_err_chksum);
             }
+
         }
 
         // 5. 状态计算 (只写out, 不发送)

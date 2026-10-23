@@ -12,6 +12,8 @@
 #include "pyro_uart_drv.h"
 #include "dma.h"
 #include "stm32f4xx_hal_dma.h"
+#include "pyro_log.h"
+#include "usart.h"
 
 #include <cstring>
 #include <map>
@@ -19,6 +21,57 @@
 
 namespace pyro
 {
+namespace
+{
+/**
+ * @brief UART句柄转可读串口名字
+ * @param huart uart句柄指针
+ * @return "USART1" / "USART3" / "USART6" / "UART_UNKNOWN"
+ */
+const char *huart_to_name(UART_HandleTypeDef *huart)
+{
+    if (huart == &huart1)
+        return "USART1";
+    if (huart == &huart3)
+        return "USART3";
+    if (huart == &huart6)
+        return "USART6";
+    return "UART_UNKNOWN";
+}
+
+/**
+ * @brief 将HAL字长枚举转字符串
+ */
+const char *wordlen_to_str(uint32_t wl)
+{
+    switch (wl)
+    {
+    case UART_WORDLENGTH_8B:
+        return "8bit";
+    case UART_WORDLENGTH_9B:
+        return "9bit";
+    default:
+        return "unknown";
+    }
+}
+
+/**
+ * @brief 停止位转字符串
+ */
+const char *stopbit_to_str(uint32_t sb)
+{
+    switch (sb)
+    {
+    case UART_STOPBITS_1:
+        return "1";
+    case UART_STOPBITS_2:
+        return "2";
+    default:
+        return "unknown";
+    }
+}
+} // namespace
+
 /* Constructor and Destructor ------------------------------------------------*/
 uart_drv_t::uart_drv_t(UART_HandleTypeDef *huart, const uint16_t buf_length)
     : rx_buf{nullptr, nullptr}, _huart(huart)
@@ -72,6 +125,8 @@ std::map<UART_HandleTypeDef *, uart_drv_t *> &uart_drv_t::uart_map()
 status_t uart_drv_t::write(const uint8_t *p, const uint16_t size,
                            const uint32_t waittime)
 {
+    report_pending_error();
+
     const uint8_t ret = HAL_UART_Transmit(_huart, p, size, waittime);
     if (ret == HAL_OK)
         return PYRO_OK;
@@ -99,6 +154,16 @@ status_t uart_drv_t::write(const uint8_t *p, const uint16_t size)
         return PYRO_BUSY;
     }
     return PYRO_ERROR;
+}
+
+void uart_drv_t::report_pending_error()
+{
+    if (0U == rx_error_cnt)
+        return;
+
+    PYRO_LOGW("UART", "%s rx error accumulated %lu times",
+              huart_to_name(_huart), (unsigned long)rx_error_cnt);
+    rx_error_cnt = 0;
 }
 
 /* Reception Control Methods -------------------------------------------------*/
@@ -147,8 +212,14 @@ status_t uart_drv_t::disable_rx_dma()
 status_t uart_drv_t::reset(const uint32_t BaudRate, const uint32_t WordLength,
                            const uint32_t StopBits, const uint32_t Parity)
 {
+    const char *uart_name = huart_to_name(_huart);
+    PYRO_LOGI("UART", "%s reconfig, baud=%lu, len=%s, stop=%s",
+              uart_name, (unsigned long)BaudRate,
+              wordlen_to_str(WordLength), stopbit_to_str(StopBits));
+
     if (disable_rx_dma() != PYRO_OK)
     {
+        PYRO_LOGE("UART", "%s disable rx dma failed", uart_name);
         return PYRO_ERROR;
     }
 
@@ -158,14 +229,21 @@ status_t uart_drv_t::reset(const uint32_t BaudRate, const uint32_t WordLength,
     _huart->Init.Parity     = Parity;
 
     if (HAL_OK != HAL_UART_DeInit(_huart))
+    {
+        PYRO_LOGE("UART", "%s HAL_UART_DeInit failed", uart_name);
         return PYRO_ERROR;
+    }
     if (HAL_OK != HAL_UART_Init(_huart))
+    {
+        PYRO_LOGE("UART", "%s HAL_UART_Init failed", uart_name);
         return PYRO_ERROR;
+    }
 
     // Clear all pending error flags (F407用UART_FLAG_*标志).
     // 清除所有挂起的错误标志。
     __HAL_UART_CLEAR_FLAG(_huart, UART_FLAG_PE | UART_FLAG_FE |
                                       UART_FLAG_NE | UART_FLAG_ORE);
+    PYRO_LOGI("UART", "%s init success", uart_name);
     return PYRO_OK;
 }
 
@@ -274,6 +352,12 @@ HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
     {
         const auto drv = it->second;
 
+        /*
+         * 中断上下文不能直接打日志（日志锁非 ISR 安全），
+         * 这里只累计错误次数，由任务上下文通过 report_pending_error() 上报。
+         */
+        drv->rx_error_cnt++;
+
         // Clear error flags and restart reception to recover the peripheral.
         // 清除错误标志并重新启动接收，以恢复外设。
         __HAL_UART_CLEAR_FLAG(huart, UART_FLAG_PE | UART_FLAG_FE |
@@ -283,9 +367,23 @@ HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
 }
 
 // DMA 硬件发送完成中断回调
+/*
+ * 日志模块的 DMA 发送完成钩子，为弱符号：
+ * 仅当日志后端选择串口输出时（elog_port.c 中定义 ELOG_OUTPUT_BACKEND_UART）
+ * 才存在实现；否则符号为 NULL，回调中直接跳过。
+ */
+extern "C" void elog_port_uart_tx_cplt(UART_HandleTypeDef *huart)
+    __attribute__((weak));
+
 extern "C" void
 HAL_UART_TxCpltCallback(UART_HandleTypeDef *huart)
 {
+    /* 通知日志模块释放其 DMA 发送缓冲区（弱符号，未启用 UART 日志后端时为空） */
+    if (elog_port_uart_tx_cplt != nullptr)
+    {
+        elog_port_uart_tx_cplt(huart);
+    }
+
     // 通过硬件句柄查找对应的 C++ 驱动实例
     const auto it = pyro::uart_drv_t::uart_map().find(huart);
     static BaseType_t xHigherPriorityTaskWoken = pdFALSE;

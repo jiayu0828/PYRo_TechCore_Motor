@@ -114,6 +114,12 @@ public:
     status_t write(const uint8_t *p, uint16_t size, uint32_t waittime);
 
     /**
+     * @brief 上报中断中累计的接收错误（任务上下文调用）
+     * 中断里只计数，这里统一打印，避免在 ISR 中使用日志互斥锁。
+     */
+    void report_pending_error();
+
+    /**
      * @brief Non-blocking write using HAL DMA.
      * 使用 HAL DMA 方式的非阻塞写操作。
      */
@@ -183,6 +189,11 @@ public:
     // Internal state tracking.
     // 内部状态跟踪。
     state_t state{};
+
+    // 接收错误累计计数（中断中递增，任务上下文读取上报）
+    // 中断里不能直接打日志（elog 互斥锁非 ISR 安全），
+    // 因此只计数，由 report_pending_error() 在任务上下文打印。
+    volatile uint32_t rx_error_cnt{};
 
 private:
     /* Private Constructor ---------------------------------------------------*/

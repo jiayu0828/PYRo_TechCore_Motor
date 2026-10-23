@@ -78,5 +78,11 @@ target_link_libraries(${CMAKE_PROJECT_NAME}
         dsppp_lib
 )
 
+# newlib-nano 默认不链接浮点 printf，%f 会输出空字符串。
+# -u _printf_float 强制链接浮点格式化支持（约增加 6~10KB FLASH）。
+target_link_options(${CMAKE_PROJECT_NAME} PRIVATE
+        "-u_printf_float"
+)
+
 
 add_dependencies(echo_robot_id ${CMAKE_PROJECT_NAME})

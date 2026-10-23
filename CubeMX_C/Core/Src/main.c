@@ -28,6 +28,8 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
+#include "SEGGER_RTT.h"
+#include "log.h"
 
 /* USER CODE END Includes */
 
@@ -72,6 +74,10 @@ int main(void)
 {
 
   /* USER CODE BEGIN 1 */
+  /* 初始化 RTT 控制块：写入 "SEGGER RTT" 标识与缓冲区指针。
+   * 必须在 HAL_Init() 之前，且早于任何日志输出，否则调试器搜不到控制块。
+   * 只做内存写入，不依赖时钟/中断/HAL。 */
+
 
   /* USER CODE END 1 */
 
@@ -81,6 +87,8 @@ int main(void)
   HAL_Init();
 
   /* USER CODE BEGIN Init */
+    SEGGER_RTT_Init();
+    LogHandle.Ctrl.Init();
 
   /* USER CODE END Init */
 

@@ -124,6 +124,15 @@ class cybergear_motor_drv_t : public motor_base_t
     mode_state_t get_mode_state() const { return _mode_state; }
     uint8_t get_motor_id() const { return _motor_id; }
 
+    /**
+     * @brief 累计收到的反馈帧数量
+     *
+     * 用来区分"从未通信"和"通信了但状态异常"：
+     *   count == 0 -> 一帧反馈都没收到，链路/供电/波特率有问题
+     *   count >  0 -> 通信正常，此时再看 fault / mode 才有意义
+     */
+    uint32_t get_feedback_count() const { return _feedback_cnt; }
+
     // ===== 参数读取（同步/异步）=====
     /**
      * @brief 同步读取单个参数（发送读命令后等待回应）
@@ -141,6 +150,18 @@ class cybergear_motor_drv_t : public motor_base_t
      * @return PYRO_OK=成功, 其他=失败
      */
     status_t read_bus_voltage(uint32_t timeout_ms = 50);
+
+    /**
+     * @brief 异步请求读取单个参数（不阻塞）
+     *
+     * 只负责把读参数命令（通信类型17）发出去，回应由扩展帧回调解析。
+     * 适合在控制循环里周期性刷新母线电压等只读参数，避免 read_bus_voltage()
+     * 阻塞等待影响控制周期。
+     *
+     * @param index 参数索引（见 param_index_t）
+     * @return PYRO_OK=已发送, 其他=发送失败
+     */
+    status_t request_param(param_index_t index);
 
     /**
      * @brief 获取最近一次异步读参数的结果
@@ -196,6 +217,9 @@ class cybergear_motor_drv_t : public motor_base_t
 
     // 反馈新鲜度标志
     volatile bool _feedback_fresh;
+
+    // 累计反馈帧数（ISR 中递增，仅作诊断）
+    volatile uint32_t _feedback_cnt = 0;
 
     // 异步读参数状态（类型18回应帧解析后保存）
     volatile param_index_t _read_param_index;  ///< 最近一次读取的参数索引
