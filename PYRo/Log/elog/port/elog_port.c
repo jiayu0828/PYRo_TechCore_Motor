@@ -222,7 +222,7 @@ void elog_port_output(unsigned char terminal, const char *log, size_t size)
         }
     }
 #elif defined(ELOG_OUTPUT_BACKEND_RTT)
-    SEGGER_RTT_SetTerminal(terminal);
+    (void)terminal;
     SEGGER_RTT_Write(0, log, size);
 #elif defined(ELOG_OUTPUT_BACKEND_FLASH)
     /*

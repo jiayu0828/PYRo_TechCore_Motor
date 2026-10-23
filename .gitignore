@@ -31,7 +31,6 @@ build/
 /cmake-build-debug-stm32
 .cache/
 .idea
-.vscode
 !*/CMakeLists.txt
 !CMakeLists.txt
 
