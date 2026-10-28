@@ -548,6 +548,16 @@ static void flush_motors(void)
     if (motor_online[1]) g_pitch_motor->send_motion_control(out.pitch_trq, 0, 0, 0, 0);
     if (motor_online[2]) g_roll_motor->send_motion_control(out.roll_trq, 0, 0, 0, 0);
 
+    // 打印三个轴实际下发的力矩 (2s一次)
+    static float trq_print_t = 0;
+    float now_ms = dwt_drv_t::get_timeline_ms();
+    if (now_ms - trq_print_t > 500.0f) {
+        trq_print_t = now_ms;
+        PYRO_LOGI("CTRL", "torque yaw=%.3f pitch=%.3f roll=%.3f",
+                  (double)out.yaw_trq, (double)out.pitch_trq,
+                  (double)out.roll_trq);
+    }
+
     // 调试记录
     g_yaw_trq_sent   = out.yaw_trq;
     g_pitch_trq_sent = out.pitch_trq;
@@ -556,7 +566,6 @@ static void flush_motors(void)
     // 帧格式: 0xAA | float yaw_fb | float yaw_target | float yaw_trq | 0x55
     // 共14字节, 小端序
     static float print_t = 0;
-    float now_ms = dwt_drv_t::get_timeline_ms();
     if (now_ms - print_t > 20.0f) {
         print_t = now_ms;
         union { float f; uint8_t b[4]; } c1, c2, c3;
@@ -733,6 +742,36 @@ extern "C" void techcore_ctrl_task(void *argument)
                           (unsigned long)g_cmd_rx_err_chksum);
             }
 
+        }
+
+        // 4. 处理指令
+        if (cmd_recv.estop_enable) {
+            cmd_recv.estop_enable = 0;
+            sys_state = SYS_ESTOP;
+            g_yaw_motor->disable();
+            g_pitch_motor->disable();
+            g_roll_motor->disable();
+            g_x_motor->disable();
+            g_z_motor->disable();
+        } else if (sys_state != SYS_ESTOP) {
+            if (cmd_recv.calibrate_enable) {
+                cmd_recv.calibrate_enable = 0;
+                sys_state = SYS_CALIBRATION;
+                cali_axis = 0;
+                cali_phase = CALI_FIND_NEG;
+                cali_stall_t = 0;
+                torque_hold = false;
+            } else if (cmd_recv.pose_move_enable) {
+                cmd_recv.pose_move_enable = 0;
+                if (sys_state != SYS_CALIBRATION) {
+                    pose_act = &g_pose_actions[pose_action_i];
+                    pose_action_i = (pose_action_i + 1) % g_pose_action_count;
+                    sys_state = SYS_POSE_MOVE;
+                    pose_state = POSE_X_MOVE;
+                    pose_start_t = now;
+                    torque_hold = false;
+                }
+            }
         }
 
         // 5. 状态计算 (只写out, 不发送)
