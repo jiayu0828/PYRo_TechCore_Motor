@@ -1,0 +1,172 @@
+{
+    "version": "2.0.0",
+    "tasks": [
+        {
+            "label": "build",
+            "dependsOn": [
+                "cmake-config",
+                "ninja-build"
+            ],
+            "dependsOrder": "sequence",
+            "group": {
+                "kind": "build",
+                "isDefault": true
+            },
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "默认构建任务：CMake配置 + Ninja编译"
+        },
+        {
+            "label": "cmake-config",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "-S",
+                "${workspaceFolder}",
+                "-B",
+                "${workspaceFolder}/build",
+                "-G",
+                "Ninja",
+                "-DCMAKE_BUILD_TYPE=Debug",
+                "-DROBOT_ID=1"
+            ],
+            "problemMatcher": [],
+            "detail": "CMake 生成 Ninja 构建文件，Debug"
+        },
+        {
+            "label": "cmake-config-release",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "-S",
+                "${workspaceFolder}",
+                "-B",
+                "${workspaceFolder}/build_release",
+                "-G",
+                "Ninja",
+                "-DCMAKE_BUILD_TYPE=Release",
+                "-DROBOT_ID=1"
+            ],
+            "problemMatcher": [],
+            "detail": "CMake Release配置"
+        },
+        {
+            "label": "ninja-build",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build"
+            ],
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "Ninja 编译 Debug"
+        },
+        {
+            "label": "ninja-build-release",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build_release"
+            ],
+            "problemMatcher": [
+                "$gcc"
+            ],
+            "detail": "Ninja 编译 Release"
+        },
+        {
+            "label": "clean",
+            "type": "shell",
+            "command": "cmake",
+            "args": [
+                "--build",
+                "${workspaceFolder}/build",
+                "--target",
+                "clean"
+            ],
+            "problemMatcher": [],
+            "detail": "清理 Debug 构建产物"
+        },
+        {
+            "label": "clean-all",
+            "type": "shell",
+            "command": "Remove-Item",
+            "args": [
+                "-Recurse",
+                "-Force",
+                "${workspaceFolder}/build",
+                "${workspaceFolder}/build_release"
+            ],
+            "problemMatcher": [],
+            "detail": "直接删除 build、build_release 文件夹（Windows PowerShell）"
+        },
+        {
+            "label": "download",
+            "type": "shell",
+            "command": "openocd",
+            "args": [
+                "-f",
+                "interface/cmsis-dap.cfg",
+                "-f",
+                "target/stm32f4x.cfg",
+                "-c",
+                "set elf_path [string map {\\\\ /} {${workspaceFolder}/build/PYRo_Robot.elf}]; program $elf_path verify reset exit"
+            ],
+            "dependsOn": "build",
+            "problemMatcher": [],
+            "detail": "【一次性烧录】烧完 OpenOCD 直接退出，不保留RTT"
+        },
+        {
+            "label": "download-rtt",
+            "type": "shell",
+            "command": "openocd",
+            "args": [
+                "-f",
+                "${workspaceFolder}/rtt.cfg",
+                "-c",
+                "set elf_path [string map {\\\\ /} {${workspaceFolder}/build/PYRo_Robot.elf}]; program $elf_path verify",
+                "-c",
+                "reset halt",
+                "-c",
+                "reset run",
+                "-c",
+                "sleep 300",
+                "-c",
+                "rtt setup 0x20000000 0x20000",
+                "-c",
+                "rtt start",
+                "-c",
+                "rtt server start 9090 0",
+               ],
+            "dependsOn": "build",
+            "isBackground": true,
+            "problemMatcher": {
+                "owner": "openocd",
+                "pattern": {
+                    "regexp": "^$"
+                },
+                "background": {
+                    "activeOnStart": true,
+                    "beginsPattern": ".*RTT server on 127.0.0.1:9090.*",
+                    "endsPattern": "never"
+                }
+            },
+            "detail": "【烧录+驻留RTT】分离program和reset命令，时序可控"
+        },
+        {
+            "label": "rtt-console",
+            "type": "shell",
+            "command": "powershell.exe",
+            "args": [
+                "-NoProfile",
+                "-Command",
+                "$deadline = (Get-Date).AddSeconds(15); $client = $null; while ((Get-Date) -lt $deadline) { $candidate = [System.Net.Sockets.TcpClient]::new(); try { $candidate.Connect('127.0.0.1', 9090); $client = $candidate; Write-Host '✅ RTT TCP connected 127.0.0.1:9090'; break } catch { $candidate.Dispose(); Start-Sleep -Milliseconds 200 } }; if ($null -eq $client) { throw '❌ RTT server port 9090 connect timeout, check openocd task' }; $stream = $client.GetStream(); $buffer = New-Object byte[] 4096; try { while (($read = $stream.Read($buffer, 0, $buffer.Length)) -gt 0) { [Console]::Out.Write([Text.Encoding]::UTF8.GetString($buffer, 0, $read)) } } finally { Write-Host '`n🔌 RTT connection closed'; $client.Dispose() }"
+            ],
+            "problemMatcher": [],
+            "detail": "RTT TCP 客户端控制台，连接 9090，超时15s"
+        }
+    ]
+}

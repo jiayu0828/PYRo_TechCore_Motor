@@ -300,10 +300,10 @@ void cybergear_motor_drv_t::extended_rx_callback(uint32_t id,
             else if (type == CMD_WRITE_PARAM)
             {
                 // ===== 参数读写回应帧（类型18）=====
-                // 扩展帧ID: type=18, data=参数索引(16bit), target=电机ID
-                // 数据区: Byte0~1=参数索引, Byte4~7=参数值(float, 小端)
+                // 扩展帧ID: bit28~24=type(18), bit23~8=参数索引, bit7~0=电机ID
+                // 数据区  : Byte4~7=参数值(float, 小端)
                 uint16_t param_idx =
-                    static_cast<uint16_t>((data[0] << 8) | data[1]);
+                    static_cast<uint16_t>((id >> 8) & 0xFFFFU);
                 uint32_t float_bits =
                     static_cast<uint32_t>(data[4]) |
                     (static_cast<uint32_t>(data[5]) << 8) |
@@ -383,21 +383,21 @@ void cybergear_motor_drv_t::parse_feedback(uint32_t id, const uint8_t *data)
 
     // 标记反馈新鲜
     _feedback_fresh = true;
+    _feedback_cnt++;
 }
 
 status_t cybergear_motor_drv_t::write_param_float(param_index_t index,
                                                     float value)
 {
     // 通信类型18：单参数写入
-    // 数据区: Byte0~1=index, Byte2~3=0, Byte4~7=float(小端)
+    // 扩展帧ID: bit28~24=type(18), bit23~8=参数索引, bit7~0=电机ID
+    // 数据区  : Byte0~3=0, Byte4~7=float(小端)
     uint32_t ext_id = build_ext_id(CMD_WRITE_PARAM,
-                                    static_cast<uint16_t>(_master_id << 8),
+                                    static_cast<uint16_t>(index),
                                     _motor_id);
 
     std::array<uint8_t, 8> data{};
     data.fill(0);
-    data[0] = static_cast<uint8_t>(index >> 8);
-    data[1] = static_cast<uint8_t>(index & 0xFF);
 
     // float按小端写入Byte4~7
     uint32_t float_bits;
@@ -414,14 +414,13 @@ status_t cybergear_motor_drv_t::write_param_u8(param_index_t index,
                                                  uint8_t value)
 {
     // 通信类型18：单参数写入（1字节数据在Byte4）
+    // 扩展帧ID: bit28~24=type(18), bit23~8=参数索引, bit7~0=电机ID
     uint32_t ext_id = build_ext_id(CMD_WRITE_PARAM,
-                                    static_cast<uint16_t>(_master_id << 8),
+                                    static_cast<uint16_t>(index),
                                     _motor_id);
 
     std::array<uint8_t, 8> data{};
     data.fill(0);
-    data[0] = static_cast<uint8_t>(index >> 8);
-    data[1] = static_cast<uint8_t>(index & 0xFF);
     data[4] = value;
 
     return _can_drv->send_extended_msg(ext_id, data.data());
@@ -430,14 +429,14 @@ status_t cybergear_motor_drv_t::write_param_u8(param_index_t index,
 status_t cybergear_motor_drv_t::read_param(param_index_t index)
 {
     // 通信类型17：单参数读取
+    // 扩展帧ID: bit28~24=type(17), bit23~8=参数索引, bit7~0=电机ID
+    // 数据区  : 全 0
     uint32_t ext_id = build_ext_id(CMD_READ_PARAM,
-                                    static_cast<uint16_t>(_master_id << 8),
+                                    static_cast<uint16_t>(index),
                                     _motor_id);
 
     std::array<uint8_t, 8> data{};
     data.fill(0);
-    data[0] = static_cast<uint8_t>(index >> 8);
-    data[1] = static_cast<uint8_t>(index & 0xFF);
 
     return _can_drv->send_extended_msg(ext_id, data.data());
 }
@@ -595,6 +594,11 @@ status_t cybergear_motor_drv_t::read_bus_voltage(uint32_t timeout_ms)
         _bus_voltage = voltage;
     }
     return ret;
+}
+
+status_t cybergear_motor_drv_t::request_param(param_index_t index)
+{
+    return read_param(index);
 }
 
 bool cybergear_motor_drv_t::get_last_read_param(param_index_t &out_index,

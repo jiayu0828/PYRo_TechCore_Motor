@@ -21,10 +21,12 @@ endif ()
 # 5. 源文件配置 (按分类排序)
 # ==============================================================================
 target_sources(PYRo PRIVATE
+        Core/Def/pyro_log.c
         Core/ETL/map.cpp
         Core/Lock/pyro_mutex.cpp
         Core/Lock/pyro_rw_lock.cpp
         Core/Task/pyro_task.cpp
+        Core/Task/pyro_task_monitor.cpp
         Core/Memory/pyro_core_mem.cpp
         Core/Task/pyro_task.cpp
 
@@ -62,6 +64,15 @@ target_sources(PYRo PRIVATE
         # --- Device ---
         Device/WS2812/ws2812_driver.cpp
         Device/WS2812/ws2812_middleware.cpp
+
+        # --- Log ---
+        Log/log.c
+        Log/elog/elog.c
+        Log/elog/elog_utils.c
+        Log/elog/port/elog_port.c
+        Log/RTT/SEGGER_RTT.c
+        Log/RTT/SEGGER_RTT_printf.c
+        Log/RTT/SEGGER_RTT_ASM_ARMv7M.S
 
 )
 
@@ -110,6 +121,12 @@ target_include_directories(PYRo PUBLIC
         Module
 
         # --- Debug ---
+
+        # --- Log ---
+        Log
+        Log/elog
+        Log/elog/port
+        Log/RTT
 
 )
 

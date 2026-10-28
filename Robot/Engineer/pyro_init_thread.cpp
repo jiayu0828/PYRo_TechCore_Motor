@@ -4,6 +4,9 @@
 #include "pyro_cybergear_motor_drv.h"
 #include "pyro_dji_motor_drv.h"
 #include "pyro_algo_pid.h"
+#include "pyro_log.h"
+#include "log.h"
+#include "pyro_task_monitor.h"
 #include "FreeRTOS.h"
 #include "task.h"
 
@@ -12,7 +15,22 @@
 #include "move_switch.h"
 #include "move_control.h"
 
+#include <cstdarg>
+#include <cstdio>
+
 using namespace pyro;
+
+// ============================================================
+// 日志适配层：把库内 PYRO_LOGx 回调转成 EasyLogger 调用
+// ============================================================
+static void pyro_log_to_elog(pyro_log_level_t level, const char *tag,
+                             const char *format, va_list args)
+{
+    char buf[ELOG_LINE_BUF_SIZE];
+    vsnprintf(buf, sizeof(buf), format, args);
+    elog_output(DEFAULT_TERMINAL, static_cast<uint8_t>(level), tag,
+                nullptr, nullptr, 0, "%s", buf);
+}
 
 // ============================================================
 // 小米Cybergear电机ID配置(硬编码，修改只需改这里)
@@ -62,6 +80,16 @@ namespace pyro{
         (void)argument;
 
         // ============================================================
+        // 0. 日志系统初始化（必须在任何驱动打日志之前）
+        // ============================================================
+        LogHandle.Ctrl.Init();
+        pyro_log_set_handler(pyro_log_to_elog);
+        PYRO_LOGI("APP", "log system ready");
+
+        // 启动任务栈监控（每5s打印各任务历史最小剩余栈）
+        (void)pyro_task_monitor_start();
+
+        // ============================================================
         // 1. 底层外设初始化
         // ============================================================
 
@@ -92,6 +120,13 @@ namespace pyro{
         volatile status_t ret_can2_start = can2_drv->start();
         (void)ret_can1_init; (void)ret_can2_init;
         (void)ret_can1_start; (void)ret_can2_start;
+
+        PYRO_LOGI("CAN", "can1 init=%d start=%d", (int)ret_can1_init,
+                  (int)ret_can1_start);
+        /* CAN2 运行期日志已静默（见 pyro_can_drv.cpp 的 CAN_LOG_ENABLE_CAN2），
+         * 这里只保留返回值供调试器查看 */
+        (void)ret_can2_init;
+        (void)ret_can2_start;
 
         // 注册Cybergear扩展帧接收回调（小米电机反馈）
         can1_drv->register_extended_rx_callback(
@@ -133,7 +168,7 @@ namespace pyro{
         g_roll_pos_pid  = new pyro::pid_t(2.5f, 0.0f, 0.6f, 0.2f, 3.0f,30.0f,1,0,0,0);
         g_roll_rot_pid  = new pyro::pid_t(3.0f, 0.01f, 0.0f, 1.0f, 5.0f,20.0f,1,0,0,0);
         // 校准专用速度环: Kp大, 带负载能转起来
-        g_pitch_cali_pid = new pyro::pid_t(6.0f, 0.0f, 0.0f, 0.0f, 5.0f,20.0f,1,0,0,0);
+        g_pitch_cali_pid = new pyro::pid_t(8.0f, 0.0f, 0.0f, 0.0f, 8.0f,20.0f,1,0,0,0);
         g_roll_cali_pid  = new pyro::pid_t(7.0f, 0.0f, 0.0f, 0.0f, 5.0f,20.0f,1,0,0,0);
 
         g_yaw_motor   = new cybergear_motor_drv_t(CYBERGEAR_YAW_ID,   CYBERGEAR_MASTER_ID, bsp_can::can1);
@@ -148,33 +183,34 @@ namespace pyro{
         vTaskDelay(pdMS_TO_TICKS(3000)); // 等待电机总线稳定
 
         ret = g_yaw_motor->enable();
-        // 可在此处加断点检查 ret == PYRO_OK
-        (void)ret;
+        PYRO_LOGI("MOTOR", "yaw enable ret=%d", (int)ret);
         vTaskDelay(pdMS_TO_TICKS(10));
 
         ret = g_pitch_motor->enable();
-        (void)ret;
+        PYRO_LOGI("MOTOR", "pitch enable ret=%d", (int)ret);
         vTaskDelay(pdMS_TO_TICKS(10));
 
         ret = g_roll_motor->enable();
-        (void)ret;
+        PYRO_LOGI("MOTOR", "roll enable ret=%d", (int)ret);
         vTaskDelay(pdMS_TO_TICKS(10));
 
         // 注意: 不在电机内部设置力矩限制(set_torque_limit)，
         // 完全由软件输出端限幅 + 堵转保护来保证安全
 
         ret = g_x_motor->enable();
-        (void)ret;
+        PYRO_LOGI("MOTOR", "x enable ret=%d", (int)ret);
         vTaskDelay(pdMS_TO_TICKS(5));
 
         ret = g_z_motor->enable();
-        (void)ret;
+        PYRO_LOGI("MOTOR", "z enable ret=%d", (int)ret);
         vTaskDelay(pdMS_TO_TICKS(5));
 
         // ============================================================
         // 6. 初始化完成，置标志位
         // ============================================================
         g_techcore_init_done = true;
+
+        PYRO_LOGI("APP", "init done, control task released");
 
         // 删除初始化任务
         vTaskDelete(nullptr);

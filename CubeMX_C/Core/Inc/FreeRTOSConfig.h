@@ -134,6 +134,8 @@ standard names. */
 /* #define xPortSysTickHandler SysTick_Handler */
 
 /* USER CODE BEGIN Defines */
+#define INCLUDE_uxTaskGetStackHighWaterMark 1
+#define INCLUDE_eTaskGetState   1
 /* Section where parameter definitions can be added (for instance, to override default ones in FreeRTOS.h) */
 /* USER CODE END Defines */
 

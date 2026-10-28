@@ -86,6 +86,14 @@ int command_recv_process(command_recv_t *cmd, const uint8_t *buf, uint16_t len)
             cmd->estop_enable = 1;
             break;
 
+        case CMD_CAN1_SELFTEST:  // 5 = CAN1 回环自检
+            cmd->can1_selftest_enable = 1;
+            break;
+
+        case CMD_CAN2_SELFTEST:  // 6 = CAN2 回环自检
+            cmd->can2_selftest_enable = 1;
+            break;
+
         default:
             break;
     }

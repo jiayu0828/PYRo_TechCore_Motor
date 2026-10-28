@@ -242,6 +242,33 @@ SECTIONS
   } >RAM
   PROVIDE( __non_tls_bss_start = ADDR(.bss) );
 
+  /* SEGGER RTT control block and channel-0 buffers.
+  *
+  * SEGGER_RTT.c places _SEGGER_RTT / _acUpBuffer / _acDownBuffer in
+  * section ".rtt_d1". On the H7 they live in D1 SRAM because the debugger
+  * (via DAP/APB) must see them without cache coherency issues. The F407
+  * has no data cache and its 128K SRAM at 0x20000000 is reachable by the
+  * debugger, so plain RAM is the correct placement here.
+  *
+  * These buffers are not initialised from FLASH: SEGGER_RTT_Init() fills
+  * the control block at runtime, so NOLOAD is sufficient and saves
+  * ~2.3K of FLASH image. KEEP() prevents --gc-sections from dropping them
+  * while the UART log backend is selected (nothing references RTT then),
+  * so switching back to ELOG_OUTPUT_BACKEND_RTT needs no linker change.
+  *
+  * Aligned to 8 bytes to match the __attribute__((aligned(8))) in
+  * SEGGER_RTT.c.
+  */
+  .rtt_d1 (NOLOAD) : ALIGN(8)
+  {
+    . = ALIGN(8);
+    __rtt_d1_start = .;
+    KEEP(*(.rtt_d1))
+    KEEP(*(.rtt_d1*))
+    . = ALIGN(8);
+    __rtt_d1_end = .;
+  } >RAM
+
   PROVIDE( __bss_start = __tbss_start );
   PROVIDE( __bss_size = __bss_end - __bss_start );
 

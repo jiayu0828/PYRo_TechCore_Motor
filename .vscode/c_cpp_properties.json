@@ -1,0 +1,26 @@
+{
+    "configurations": [
+        {
+            "name": "Win32",
+            "includePath": [
+                "${workspaceFolder}/**",
+                "${workspaceFolder}/CubeMX_C/Core/Inc",
+                "${workspaceFolder}/CubeMX_C/Drivers/STM32F4xx_HAL_Driver/Inc",
+                "${workspaceFolder}/CubeMX_C/Drivers/STM32F4xx_HAL_Driver/Inc/Legacy"
+            ],
+            "defines": [
+                "_DEBUG",
+                "UNICODE",
+                "_UNICODE",
+                "USE_PWR_LDO_SUPPLY",
+                "USE_HAL_DRIVER",
+                "STM32F427xx"
+            ],
+            "compilerPath": "arm-none-eabi-gcc.exe",
+            "cStandard": "c17",
+            "cppStandard": "c++23",
+            "intelliSenseMode": "gcc-arm"
+        }
+    ],
+    "version": 4
+}
