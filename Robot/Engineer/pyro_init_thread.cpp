@@ -164,11 +164,11 @@ namespace pyro{
         g_yaw_rot_pid   = new pyro::pid_t(2.0f, 0.01f, 0.0f, 1.0f, 5.0f,20.0f,1,0,0,0);
         // Pitch/Roll正常PID: 和Yaw一样
         g_pitch_pos_pid = new pyro::pid_t(2.5f, 0.0f, 0.6f, 0.2f, 3.0f,30.0f,1,0,0,0);
-        g_pitch_rot_pid = new pyro::pid_t(3.0f, 0.01f, 0.0f, 1.0f, 5.0f,20.0f,1,0,0,0);
+        g_pitch_rot_pid = new pyro::pid_t(3.5f, 0.08f, 0.0f, 3.0f,8.0f,20.0f,1,0,0,0);
         g_roll_pos_pid  = new pyro::pid_t(2.5f, 0.0f, 0.6f, 0.2f, 3.0f,30.0f,1,0,0,0);
         g_roll_rot_pid  = new pyro::pid_t(3.0f, 0.01f, 0.0f, 1.0f, 5.0f,20.0f,1,0,0,0);
         // 校准专用速度环: Kp大, 带负载能转起来
-        g_pitch_cali_pid = new pyro::pid_t(8.0f, 0.0f, 0.0f, 0.0f, 8.0f,20.0f,1,0,0,0);
+        g_pitch_cali_pid = new pyro::pid_t(8.5f, 0.0f, 0.0f, 4.0f, 8.0f,20.0f,1,0,0,0);
         g_roll_cali_pid  = new pyro::pid_t(7.0f, 0.0f, 0.0f, 0.0f, 5.0f,20.0f,1,0,0,0);
 
         g_yaw_motor   = new cybergear_motor_drv_t(CYBERGEAR_YAW_ID,   CYBERGEAR_MASTER_ID, bsp_can::can1);

@@ -43,7 +43,7 @@ volatile float   g_cybergear_cmd_velocity = 0.0f;   ///< 目标速度 (-30~30 ra
 volatile float   g_cybergear_cmd_kp       = 0.0f;   ///< 位置环Kp (0~500)
 volatile float   g_cybergear_cmd_kd       = 0.0f;   ///< 位置环Kd (0~5)
 volatile uint8_t g_cybergear_enable_cmd   = 1;      ///< 1=使能, 0=失能
-volatile uint8_t g_cybergear_new_id       = 1;      ///< 设为非0触发更改ID，完成后自动清零
+volatile uint8_t g_cybergear_new_id       = 3;      ///< 设为非0触发更改ID，完成后自动清零
 
 // ============================================================
 // 反馈数据（调试器可查看）

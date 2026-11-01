@@ -242,7 +242,6 @@ volatile float    g_pitch_fb_val     = 0.0f;
 volatile float    g_pitch_target_speed = 0.0f;
 volatile float    g_roll_target_speed = 0.0f;
 volatile float    g_roll_fb_val      = 0.0f;
-
 // ============================================================
 // 每帧电机输出 (统一发送)
 // ============================================================
@@ -569,9 +568,9 @@ static void flush_motors(void)
     if (now_ms - print_t > 20.0f) {
         print_t = now_ms;
         union { float f; uint8_t b[4]; } c1, c2, c3;
-        c1.f = g_roll_trq_sent;//发送的力矩值
-        c2.f = g_roll_target_speed;//速度的期望值
-        c3.f = g_roll_fb_val;//速度的反馈值
+        c1.f = g_pitch_target;//位置的期望值
+        c2.f = g_pitch_target_speed;//速度的期望值
+        c3.f = g_pitch_fb_pos;//位置的反馈值
         uint8_t tx[14];
         tx[0]  = 0xAA;
         tx[1]  = c1.b[0]; tx[2]  = c1.b[1]; tx[3]  = c1.b[2]; tx[4]  = c1.b[3];
